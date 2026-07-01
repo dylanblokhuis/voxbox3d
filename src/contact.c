@@ -12,6 +12,7 @@
 #include "shape.h"
 #include "solver_set.h"
 #include "table.h"
+#include "voxels_contact.h"
 
 #include "box3d/box3d.h"
 
@@ -138,6 +139,9 @@ void b3InitializeContactRegisters( void )
 		b3AddType( b3_heightShape, b3_sphereShape );
 		b3AddType( b3_heightShape, b3_capsuleShape );
 		b3AddType( b3_heightShape, b3_hullShape );
+		b3AddType( b3_voxelShape, b3_sphereShape );
+		b3AddType( b3_voxelShape, b3_capsuleShape );
+		b3AddType( b3_voxelShape, b3_hullShape );
 		s_initialized = true;
 	}
 }
@@ -217,8 +221,10 @@ void b3CreateContact( b3World* world, b3Shape* shapeA, b3Shape* shapeB, int chil
 		contact->flags |= b3_contactRecycleFlag;
 	}
 
-	if ( shapeA->type == b3_meshShape || shapeA->type == b3_heightShape )
+	if ( shapeA->type == b3_meshShape || shapeA->type == b3_heightShape || shapeA->type == b3_voxelShape )
 	{
+		// Voxels, like meshes, emit multiple manifolds and must use the scalar solver path.
+		// The meshContact.triangleCache union slot stays zero-initialized (voxels don't use it).
 		contact->flags |= b3_simMeshContact;
 	}
 	else if ( shapeA->type == b3_compoundShape )
@@ -820,6 +826,22 @@ bool b3UpdateContact( b3World* world, int workerIndex, b3Contact* contact, b3Sha
 
 		// Compute mesh manifolds
 		touching = b3ComputeMeshManifolds( world, workerIndex, contact, shapeA, NULL, xfA, shapeB, xfB, isFast, arena );
+
+		if ( touching && ( shapeA->enableHitEvents || shapeB->enableHitEvents ) )
+		{
+			contact->flags |= b3_simEnableHitEvent;
+		}
+		else
+		{
+			contact->flags &= ~b3_simEnableHitEvent;
+		}
+
+		B3_ASSERT( ( touching == true && contact->manifoldCount > 0 ) || ( touching == false && contact->manifoldCount == 0 ) );
+	}
+	else if ( shapeA->type == b3_voxelShape )
+	{
+		// Voxels behave like a mesh: multiple manifolds against the convex shapeB.
+		touching = b3ComputeVoxelsManifolds( world, workerIndex, contact, shapeA, xfA, shapeB, xfB, isFast, arena );
 
 		if ( touching && ( shapeA->enableHitEvents || shapeB->enableHitEvents ) )
 		{

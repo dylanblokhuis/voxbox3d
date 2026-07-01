@@ -13,6 +13,7 @@
 // needed for dll export
 #include "aabb.h"
 #include "compound.h"
+#include "voxels.h"
 
 #include "box3d/box3d.h"
 
@@ -69,6 +70,16 @@ static float b3ComputeShapeMargin( b3Shape* shape )
 			// Return the cap so any incidental use is generous.
 			return B3_MAX_AABB_MARGIN;
 		}
+
+		case b3_voxelShape:
+		{
+			// Voxels may be dynamic. Base the margin on the largest voxel edge, matching
+			// ccd_thickness semantics — the margin should cover a single voxel's motion, not
+			// the whole grid (which could be arbitrarily large).
+			const b3Voxels* v = shape->voxels;
+			margin = b3MaxFloat( v->voxelSize.x, b3MaxFloat( v->voxelSize.y, v->voxelSize.z ) );
+		}
+		break;
 
 		default:
 			B3_VALIDATE( false );
@@ -163,6 +174,10 @@ static b3Shape* b3CreateShapeInternal( b3World* world, b3Body* body, b3WorldTran
 
 		case b3_heightShape:
 			shape->heightField = (b3HeightFieldData*)geometry;
+			break;
+
+		case b3_voxelShape:
+			shape->voxels = b3CreateVoxels( (const b3VoxelsDef*)geometry );
 			break;
 
 		default:
@@ -436,6 +451,13 @@ b3ShapeId b3CreateCompoundShape( b3BodyId bodyId, b3ShapeDef* def, const b3Compo
 	return shapeId;
 }
 
+b3ShapeId b3CreateVoxelShape( b3BodyId bodyId, const b3ShapeDef* def, const b3VoxelsDef* voxels )
+{
+	b3ShapeId shapeId = b3CreateShape( bodyId, def, voxels, b3_voxelShape, b3Transform_identity, b3Vec3_one, false );
+	// todo recording support is added in Phase 6.
+	return shapeId;
+}
+
 // Destroy a shape on a body. This doesn't need to be called when destroying a body.
 static void b3DestroyShapeInternal( b3World* world, b3Shape* shape, b3Body* body, bool wakeBodies )
 {
@@ -579,6 +601,9 @@ b3AABB b3ComputeShapeAABB( const b3Shape* shape, b3Transform transform )
 		case b3_sphereShape:
 			return b3ComputeSphereAABB( &shape->sphere, transform );
 
+		case b3_voxelShape:
+			return b3AABB_Transform( transform, shape->voxels->localAABB );
+
 		default:
 		{
 			B3_ASSERT( false );
@@ -625,6 +650,14 @@ b3AABB b3ComputeSweptShapeAABB( const b3Shape* shape, const b3Sweep* sweep, floa
 		case b3_sphereShape:
 			return b3ComputeSweptSphereAABB( &shape->sphere, xf1, xf2 );
 
+		case b3_voxelShape:
+		{
+			// Union of the oriented grid AABB at both ends of the sweep.
+			b3AABB a1 = b3AABB_Transform( xf1, shape->voxels->localAABB );
+			b3AABB a2 = b3AABB_Transform( xf2, shape->voxels->localAABB );
+			return b3AABB_Union( a1, a2 );
+		}
+
 		default:
 			B3_ASSERT( false );
 			return (b3AABB){ xf1.p, xf1.p };
@@ -656,6 +689,8 @@ b3Vec3 b3GetShapeCentroid( const b3Shape* shape )
 			b3AABB aabb = b3ComputeHeightFieldAABB( shape->heightField, b3Transform_identity );
 			return b3AABB_Center( aabb );
 		}
+		case b3_voxelShape:
+			return b3VoxelsCentroid( shape->voxels );
 		default:
 			return b3Vec3_zero;
 	}
@@ -675,6 +710,9 @@ float b3GetShapeArea( const b3Shape* shape )
 
 		case b3_sphereShape:
 			return 2.0f * B3_PI * shape->sphere.radius;
+
+		case b3_voxelShape:
+			return b3VoxelsSurfaceArea( shape->voxels );
 
 		default:
 			return 0.0f;
@@ -702,6 +740,9 @@ float b3GetShapeProjectedArea( const b3Shape* shape, b3Vec3 planeNormal )
 		case b3_sphereShape:
 			return B3_PI * shape->sphere.radius * shape->sphere.radius;
 
+		case b3_voxelShape:
+			return b3VoxelsProjectedArea( shape->voxels, planeNormal );
+
 		default:
 			return 0.0f;
 	}
@@ -719,6 +760,9 @@ b3MassData b3ComputeShapeMass( const b3Shape* shape )
 
 		case b3_sphereShape:
 			return b3ComputeSphereMass( &shape->sphere, shape->density );
+
+		case b3_voxelShape:
+			return b3ComputeVoxelsMass( shape->voxels, shape->density );
 
 		default:
 			return (b3MassData){ 0 };
@@ -777,6 +821,18 @@ b3ShapeExtent b3ComputeShapeExtent( const b3Shape* shape, b3Vec3 localCenter )
 			extent.minExtent = b3MinFloat( r1, r2 );
 			b3Vec3 p = b3FarthestPointOnAABB( aabb, localCenter );
 			extent.maxExtent = b3Abs( p );
+		}
+		break;
+
+		case b3_voxelShape:
+		{
+			// Needed for kinematic/dynamic voxel sleeping. AABB-based like the mesh case.
+			b3AABB aabb = shape->voxels->localAABB;
+			float r1 = b3Length( b3Sub( aabb.lowerBound, localCenter ) );
+			float r2 = b3Length( b3Sub( aabb.upperBound, localCenter ) );
+			extent.minExtent = b3MinFloat( r1, r2 );
+			b3Vec3 p = b3FarthestPointOnAABB( aabb, localCenter );
+			extent.maxExtent = b3Abs( b3Sub( p, localCenter ) );
 		}
 		break;
 
@@ -1010,6 +1066,11 @@ static void b3DestroyShapeAllocationForShapeChange( b3World* world, b3Shape* sha
 		case b3_hullShape:
 			b3RemoveHullFromDatabase( world, shape->hull );
 			shape->hull = NULL;
+			break;
+
+		case b3_voxelShape:
+			b3DestroyVoxels( shape->voxels );
+			shape->voxels = NULL;
 			break;
 
 		default:
