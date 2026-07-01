@@ -183,6 +183,9 @@ b3VoxelState b3VoxelsSetVoxel( b3Voxels* v, int x, int y, int z, bool filled );
 // Ray cast against the grid (local space). Amanatides-Woo DDA march.
 b3CastOutput b3RayCastVoxels( const b3Voxels* v, const b3RayCastInput* input );
 
+// Shape cast a convex proxy (in the grid's local frame) against the grid. Returns the earliest hit.
+b3CastOutput b3ShapeCastVoxels( const b3Voxels* v, const b3ShapeCastInput* input );
+
 // Overlap test against a convex proxy already transformed into the grid's local frame.
 bool b3OverlapVoxels( const b3Voxels* v, b3Transform transform, const b3ShapeProxy* proxy );
 

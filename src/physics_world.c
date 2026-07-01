@@ -1335,6 +1335,10 @@ static bool DrawQueryCallback( int proxyId, uint64_t userData, void* context )
 					debugShape.sphere = &shape->sphere;
 					shape->userShape = world->createDebugShape( &debugShape, world->userDebugShapeContext );
 					break;
+				case b3_voxelShape:
+					debugShape.voxels = shape->voxels;
+					shape->userShape = world->createDebugShape( &debugShape, world->userDebugShapeContext );
+					break;
 				default:
 					B3_ASSERT( false );
 					break;

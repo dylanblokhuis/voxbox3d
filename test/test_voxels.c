@@ -342,6 +342,67 @@ static int VoxelsRayAndOverlap( void )
 	return 0;
 }
 
+// A fast bullet fired at a thin voxel wall must be stopped by CCD, not tunnel through.
+static int VoxelsBulletDoesNotTunnel( void )
+{
+	b3WorldDef worldDef = b3DefaultWorldDef();
+	worldDef.gravity = (b3Vec3){ 0.0f, 0.0f, 0.0f };
+	b3WorldId worldId = b3CreateWorld( &worldDef );
+
+	// Static voxel wall 3 voxels thick in x (front face at x = 1.5), tall in y and z.
+	b3BodyDef wallDef = b3DefaultBodyDef();
+	b3BodyId wallId = b3CreateBody( worldId, &wallDef );
+	int wcx = 3, wcy = 6, wcz = 6;
+	uint8_t wocc[108];
+	for ( int i = 0; i < wcx * wcy * wcz; ++i )
+	{
+		wocc[i] = 1;
+	}
+	b3VoxelsDef wdef = { 0 };
+	wdef.cx = wcx;
+	wdef.cy = wcy;
+	wdef.cz = wcz;
+	wdef.voxelSize = (b3Vec3){ 1.0f, 1.0f, 1.0f };
+	wdef.origin = (b3Vec3){ -1.5f, -3.0f, -3.0f }; // spans x in [-1.5, 1.5]
+	wdef.occupancy = wocc;
+	b3ShapeDef wshape = b3DefaultShapeDef();
+	b3CreateVoxelShape( wallId, &wshape, &wdef );
+
+	// Fast bullet fired at the wall from x = +8, moving -x.
+	b3BodyDef bulletDef = b3DefaultBodyDef();
+	bulletDef.type = b3_dynamicBody;
+	bulletDef.isBullet = true;
+	bulletDef.gravityScale = 0.0f;
+	bulletDef.position = (b3Pos){ 8.0f, 0.0f, 0.0f };
+	bulletDef.linearVelocity = (b3Vec3){ -200.0f, 0.0f, 0.0f };
+	b3BodyId bulletId = b3CreateBody( worldId, &bulletDef );
+	b3BoxHull bbox = b3MakeCubeHull( 0.25f );
+	b3ShapeDef bshape = b3DefaultShapeDef();
+	bshape.density = 1.0f;
+	b3CreateHullShape( bulletId, &bshape, &bbox.base );
+
+	float minX = 8.0f;
+	for ( int i = 0; i < 60; ++i )
+	{
+		b3World_Step( worldId, 1.0f / 60.0f, 4 );
+		b3Pos p = b3Body_GetPosition( bulletId );
+		if ( p.x < minX )
+		{
+			minX = p.x;
+		}
+	}
+	b3Pos finalPos = b3Body_GetPosition( bulletId );
+
+	b3DestroyWorld( worldId );
+
+	// The bullet must not tunnel through the far side of the wall (back face at x = -1.5).
+	ENSURE( minX > -1.5f );
+	// And it should end up stopped in front of / within the wall, not far behind it.
+	ENSURE( finalPos.x > -1.5f );
+
+	return 0;
+}
+
 int VoxelsTest( void )
 {
 	RUN_SUBTEST( VoxelsClassify );
@@ -351,5 +412,6 @@ int VoxelsTest( void )
 	RUN_SUBTEST( VoxelsBoxRestsOnFloor );
 	RUN_SUBTEST( VoxelsBlockRestsOnVoxelFloor );
 	RUN_SUBTEST( VoxelsRayAndOverlap );
+	RUN_SUBTEST( VoxelsBulletDoesNotTunnel );
 	return 0;
 }

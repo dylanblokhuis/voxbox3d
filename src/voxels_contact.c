@@ -157,9 +157,14 @@ bool b3ComputeVoxelsManifolds( b3World* world, int workerIndex, b3Contact* conta
 	const b3Voxels* v = shapeA->voxels;
 	float voxelHalfMin = 0.5f * b3MinFloat( v->voxelSize.x, b3MinFloat( v->voxelSize.y, v->voxelSize.z ) );
 
-	// shapeB's AABB in the voxel-local frame.
+	// shapeB's AABB in the voxel-local frame, expanded by the speculative margin so near-touching
+	// (not yet overlapping) contacts are still generated. Without this, fast bodies that stop just
+	// short of a voxel face get no contact and tunnel on the next step.
 	b3Transform transformBtoA = b3InvMulWorldTransforms( xfA, xfB );
+	float margin = B3_MAX_AABB_MARGIN + B3_SPECULATIVE_DISTANCE;
 	b3AABB aabbB_A = b3ComputeShapeAABB( shapeB, transformBtoA );
+	aabbB_A.lowerBound = b3Sub( aabbB_A.lowerBound, (b3Vec3){ margin, margin, margin } );
+	aabbB_A.upperBound = b3Add( aabbB_A.upperBound, (b3Vec3){ margin, margin, margin } );
 
 	// Domain for clamping "infinite" canonical axes: shapeB's AABB grown by 10x voxel half-size.
 	float grow = voxelHalfMin * 10.0f;

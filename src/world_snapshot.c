@@ -21,6 +21,7 @@
 #include "physics_world.h"
 #include "recording.h"
 #include "sensor.h"
+#include "voxels.h"
 #include "shape.h"
 #include "solver_set.h"
 #include "table.h"
@@ -521,6 +522,20 @@ static void b3SerShapes( b3RecBuffer* buf, b3World* world, b3Recording* rec )
 				b3SnapW_U32( buf, gid );
 				break;
 			}
+			case b3_voxelShape:
+			{
+				// Voxel grids are self-contained and small enough to serialize inline: dims, voxel
+				// size, origin, then the dense state array.
+				b3SnapW_I32( buf, (int)b3_voxelShape );
+				const b3Voxels* vx = src->voxels;
+				b3SnapW_I32( buf, vx->cx );
+				b3SnapW_I32( buf, vx->cy );
+				b3SnapW_I32( buf, vx->cz );
+				b3SnapW_Bytes( buf, &vx->voxelSize, sizeof( b3Vec3 ) );
+				b3SnapW_Bytes( buf, &vx->origin, sizeof( b3Vec3 ) );
+				b3SnapW_Bytes( buf, vx->states, vx->cx * vx->cy * vx->cz );
+				break;
+			}
 			default:
 				// A live shape must have a known geometry type. Fail loudly rather than emit a shape
 				// with no geometry that would silently lose its collision on restore.
@@ -708,6 +723,38 @@ static void b3DesShapes( b3SnapReader* r, b3World* world, b3RecReader* rdr )
 					b3ConvertBytesToCompound( (uint8_t*)slot->live, slot->byteCount );
 				}
 				dst->compound = (const b3CompoundData*)slot->live;
+				break;
+			}
+			case b3_voxelShape:
+			{
+				// Rebuild the grid from the inline dims + state array, then restore the exact
+				// serialized neighborhood bytes (no recompute needed — the states are already valid).
+				int cx = b3SnapR_I32( r );
+				int cy = b3SnapR_I32( r );
+				int cz = b3SnapR_I32( r );
+				b3Vec3 voxelSize, origin;
+				b3SnapR_Bytes( r, &voxelSize, sizeof( b3Vec3 ) );
+				b3SnapR_Bytes( r, &origin, sizeof( b3Vec3 ) );
+				if ( !r->ok || cx < 1 || cy < 1 || cz < 1 )
+				{
+					r->ok = false;
+					break;
+				}
+				b3VoxelsDef vdef = { 0 };
+				vdef.cx = cx;
+				vdef.cy = cy;
+				vdef.cz = cz;
+				vdef.voxelSize = voxelSize;
+				vdef.origin = origin;
+				vdef.occupancy = NULL; // start empty, then overwrite with serialized states
+				b3Voxels* vx = b3CreateVoxels( &vdef );
+				if ( vx == NULL )
+				{
+					r->ok = false;
+					break;
+				}
+				b3SnapR_Bytes( r, vx->states, cx * cy * cz );
+				dst->voxels = vx;
 				break;
 			}
 			default:

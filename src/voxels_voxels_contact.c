@@ -94,8 +94,12 @@ bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact*
 	b3AABB domain1_2 = { b3Sub( aabb1in2.lowerBound, (b3Vec3){ grow, grow, grow } ),
 						 b3Add( aabb1in2.upperBound, (b3Vec3){ grow, grow, grow } ) };
 
-	// Intersection ranges in each local frame.
-	b3VoxelRange range1 = b3VoxelsRangeIntersectingAABB( g1, aabb2in1 );
+	// Intersection ranges in each local frame, expanded by the speculative margin so near-touching
+	// voxels still generate contacts (prevents fast voxel bodies from tunneling).
+	float specMargin = B3_MAX_AABB_MARGIN + B3_SPECULATIVE_DISTANCE;
+	b3AABB aabb2in1Spec = { b3Sub( aabb2in1.lowerBound, (b3Vec3){ specMargin, specMargin, specMargin } ),
+							b3Add( aabb2in1.upperBound, (b3Vec3){ specMargin, specMargin, specMargin } ) };
+	b3VoxelRange range1 = b3VoxelsRangeIntersectingAABB( g1, aabb2in1Spec );
 	int x0 = range1.mins.x < 0 ? 0 : range1.mins.x;
 	int y0 = range1.mins.y < 0 ? 0 : range1.mins.y;
 	int z0 = range1.mins.z < 0 ? 0 : range1.mins.z;

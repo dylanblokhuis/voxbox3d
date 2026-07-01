@@ -133,6 +133,58 @@ b3CastOutput b3RayCastVoxels( const b3Voxels* v, const b3RayCastInput* input )
 	return output;
 }
 
+b3CastOutput b3ShapeCastVoxels( const b3Voxels* v, const b3ShapeCastInput* input )
+{
+	b3CastOutput best = { 0 };
+	best.fraction = input->maxFraction;
+	bool anyHit = false;
+
+	// Swept AABB of the moving proxy over [0, maxFraction], plus the proxy radius.
+	b3AABB start = b3ComputeProxyAABB( &input->proxy );
+	b3Vec3 move = b3MulSV( input->maxFraction, input->translation );
+	b3AABB swept = start;
+	swept.lowerBound = b3Min( swept.lowerBound, b3Add( start.lowerBound, move ) );
+	swept.upperBound = b3Max( swept.upperBound, b3Add( start.upperBound, move ) );
+
+	b3VoxelRange range = b3VoxelsRangeIntersectingAABB( v, swept );
+	int x0 = range.mins.x < 0 ? 0 : range.mins.x;
+	int y0 = range.mins.y < 0 ? 0 : range.mins.y;
+	int z0 = range.mins.z < 0 ? 0 : range.mins.z;
+	int x1 = range.maxs.x > v->cx ? v->cx : range.maxs.x;
+	int y1 = range.maxs.y > v->cy ? v->cy : range.maxs.y;
+	int z1 = range.maxs.z > v->cz ? v->cz : range.maxs.z;
+
+	b3ShapeCastInput localInput = *input;
+	for ( int z = z0; z < z1; ++z )
+	{
+		for ( int y = y0; y < y1; ++y )
+		{
+			for ( int x = x0; x < x1; ++x )
+			{
+				b3VoxelState s = b3VoxelsState( v, x, y, z );
+				if ( b3VoxelStateIsEmpty( s ) || b3VoxelStateType( s ) == b3_voxelTypeInterior )
+				{
+					continue;
+				}
+				localInput.maxFraction = best.fraction;
+				b3BoxHull box = b3VoxelBoxHull( v, x, y, z );
+				b3CastOutput hit = b3ShapeCastHull( &box.base, &localInput );
+				if ( hit.hit && hit.fraction <= best.fraction )
+				{
+					best = hit;
+					anyHit = true;
+				}
+			}
+		}
+	}
+
+	if ( !anyHit )
+	{
+		best.hit = false;
+	}
+	return best;
+}
+
 bool b3OverlapVoxels( const b3Voxels* v, b3Transform transform, const b3ShapeProxy* proxy )
 {
 	// The proxy is in world space and `transform` maps voxel-local -> world (same convention as

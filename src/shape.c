@@ -922,6 +922,9 @@ b3CastOutput b3ShapeCastShape( const b3Shape* shape, b3Transform transform, cons
 		case b3_sphereShape:
 			output = b3ShapeCastSphere( &shape->sphere, &localInput );
 			break;
+		case b3_voxelShape:
+			output = b3ShapeCastVoxels( shape->voxels, &localInput );
+			break;
 		default:
 			return output;
 	}
@@ -2299,6 +2302,76 @@ b3TOIOutput b3ShapeTimeOfImpact( b3Shape* shapeA, b3Shape* shapeB, b3Sweep* swee
 		b3QueryCompound( shapeA->compound, localBounds, b3CompoundTimeOfImpactFcn, &context );
 
 		return context.toiOutput;
+	}
+
+	if ( typeA == b3_voxelShape )
+	{
+		// Assume the voxel shape is static (the parry port makes the same simplification for the
+		// nonlinear sweep). Iterate the filled voxel boxes in shapeB's swept bounds and keep the
+		// earliest time of impact, delegating each box to the convex TOI.
+		const b3Voxels* v = shapeA->voxels;
+
+		b3TOIInput input;
+		input.proxyB = b3MakeShapeProxy( shapeB );
+		input.sweepB = *sweepB;
+		input.maxFraction = maxFraction;
+
+		b3Transform xfA = {
+			.p = b3Sub( sweepA->c1, b3RotateVector( sweepA->q1, sweepA->localCenter ) ),
+			.q = sweepA->q1,
+		};
+
+		// Swept bounds of shapeB, in the voxel-local frame.
+		b3AABB bounds = b3ComputeSweptShapeAABB( shapeB, sweepB, maxFraction );
+		b3AABB localBounds = b3AABB_Transform( b3InvertTransform( xfA ), bounds );
+
+		b3VoxelRange range = b3VoxelsRangeIntersectingAABB( v, localBounds );
+		int x0 = range.mins.x < 0 ? 0 : range.mins.x;
+		int y0 = range.mins.y < 0 ? 0 : range.mins.y;
+		int z0 = range.mins.z < 0 ? 0 : range.mins.z;
+		int x1 = range.maxs.x > v->cx ? v->cx : range.maxs.x;
+		int y1 = range.maxs.y > v->cy ? v->cy : range.maxs.y;
+		int z1 = range.maxs.z > v->cz ? v->cz : range.maxs.z;
+
+		b3TOIOutput best = { 0 };
+		best.fraction = maxFraction;
+		bool anyHit = false;
+
+		for ( int z = z0; z < z1; ++z )
+		{
+			for ( int y = y0; y < y1; ++y )
+			{
+				for ( int x = x0; x < x1; ++x )
+				{
+					b3VoxelState s = b3VoxelsState( v, x, y, z );
+					if ( b3VoxelStateIsEmpty( s ) || b3VoxelStateType( s ) == b3_voxelTypeInterior )
+					{
+						continue;
+					}
+
+					b3BoxHull box = b3MakeTransformedBoxHull( 0.5f * v->voxelSize.x, 0.5f * v->voxelSize.y,
+															  0.5f * v->voxelSize.z,
+															  (b3Transform){ b3VoxelsVoxelCenter( v, x, y, z ), b3Quat_identity } );
+					input.proxyA = (b3ShapeProxy){ b3GetHullPoints( &box.base ), box.base.vertexCount, 0.0f };
+					input.sweepA = *sweepA;
+					input.maxFraction = best.fraction;
+
+					b3TOIOutput output = b3TimeOfImpact( &input );
+					if ( output.state == b3_toiStateHit && output.fraction < best.fraction )
+					{
+						best = output;
+						anyHit = true;
+					}
+				}
+			}
+		}
+
+		if ( !anyHit )
+		{
+			best.state = b3_toiStateSeparated;
+			best.fraction = maxFraction;
+		}
+		return best;
 	}
 
 	if ( typeA == b3_heightShape || typeA == b3_meshShape )
