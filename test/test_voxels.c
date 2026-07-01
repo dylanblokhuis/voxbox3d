@@ -301,6 +301,47 @@ static int VoxelsBlockRestsOnVoxelFloor( void )
 	return 0;
 }
 
+// Ray cast down onto a voxel floor must hit the top surface (y=0) with an up normal, and overlap
+// queries must detect the grid.
+static int VoxelsRayAndOverlap( void )
+{
+	b3WorldDef worldDef = b3DefaultWorldDef();
+	b3WorldId worldId = b3CreateWorld( &worldDef );
+
+	b3BodyDef groundDef = b3DefaultBodyDef();
+	b3BodyId groundId = b3CreateBody( worldId, &groundDef );
+	int gcx = 6, gcy = 2, gcz = 6;
+	uint8_t occ[72];
+	for ( int i = 0; i < gcx * gcy * gcz; ++i )
+	{
+		occ[i] = 1;
+	}
+	b3VoxelsDef gdef = { 0 };
+	gdef.cx = gcx;
+	gdef.cy = gcy;
+	gdef.cz = gcz;
+	gdef.voxelSize = (b3Vec3){ 1.0f, 1.0f, 1.0f };
+	gdef.origin = (b3Vec3){ -3.0f, -2.0f, -3.0f }; // top surface at y = 0
+	gdef.occupancy = occ;
+	b3ShapeDef gshape = b3DefaultShapeDef();
+	b3CreateVoxelShape( groundId, &gshape, &gdef );
+
+	// Ray straight down from (0, 5, 0).
+	b3QueryFilter filter = b3DefaultQueryFilter();
+	b3RayResult r = b3World_CastRayClosest( worldId, (b3Pos){ 0.0f, 5.0f, 0.0f }, (b3Vec3){ 0.0f, -10.0f, 0.0f }, filter );
+	ENSURE( r.hit );
+	ENSURE_SMALL( r.point.y - 0.0f, 0.05f );  // top surface
+	ENSURE_SMALL( r.normal.y - 1.0f, 0.05f ); // up normal
+
+	// Ray that misses the grid entirely.
+	b3RayResult miss =
+		b3World_CastRayClosest( worldId, (b3Pos){ 100.0f, 5.0f, 0.0f }, (b3Vec3){ 0.0f, -10.0f, 0.0f }, filter );
+	ENSURE( miss.hit == false );
+
+	b3DestroyWorld( worldId );
+	return 0;
+}
+
 int VoxelsTest( void )
 {
 	RUN_SUBTEST( VoxelsClassify );
@@ -309,5 +350,6 @@ int VoxelsTest( void )
 	RUN_SUBTEST( VoxelsMassMatchesCuboid );
 	RUN_SUBTEST( VoxelsBoxRestsOnFloor );
 	RUN_SUBTEST( VoxelsBlockRestsOnVoxelFloor );
+	RUN_SUBTEST( VoxelsRayAndOverlap );
 	return 0;
 }

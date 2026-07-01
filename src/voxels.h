@@ -177,3 +177,14 @@ float b3VoxelsProjectedArea( const b3Voxels* v, b3Vec3 planeNormal );
 
 // Flip a voxel filled/empty and update its 6 neighbors' bytes. Returns the previous state.
 b3VoxelState b3VoxelsSetVoxel( b3Voxels* v, int x, int y, int z, bool filled );
+
+// ---- World queries (voxels treated as plain sparse cubes) ----
+
+// Ray cast against the grid (local space). Amanatides-Woo DDA march.
+b3CastOutput b3RayCastVoxels( const b3Voxels* v, const b3RayCastInput* input );
+
+// Overlap test against a convex proxy already transformed into the grid's local frame.
+bool b3OverlapVoxels( const b3Voxels* v, b3Transform transform, const b3ShapeProxy* proxy );
+
+// Character mover collision. Emits outward planes for voxels near the mover capsule.
+int b3CollideMoverAndVoxels( b3PlaneResult* planes, int capacity, const b3Voxels* v, const b3Capsule* mover );

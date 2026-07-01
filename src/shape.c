@@ -870,6 +870,9 @@ b3CastOutput b3RayCastShape( const b3Shape* shape, b3Transform transform, const 
 		case b3_heightShape:
 			output = b3RayCastHeightField( shape->heightField, &localInput );
 			break;
+		case b3_voxelShape:
+			output = b3RayCastVoxels( shape->voxels, &localInput );
+			break;
 		default:
 			return output;
 	}
@@ -951,6 +954,9 @@ bool b3OverlapShape( const b3Shape* shape, b3Transform transform, const b3ShapeP
 		case b3_sphereShape:
 			return b3OverlapSphere( &shape->sphere, transform, proxy );
 
+		case b3_voxelShape:
+			return b3OverlapVoxels( shape->voxels, transform, proxy );
+
 		default:
 			B3_ASSERT( false );
 			return false;
@@ -1021,6 +1027,10 @@ int b3CollideMover( b3PlaneResult* planes, int planeCapacity, const b3Shape* sha
 
 		case b3_heightShape:
 			planeCount = b3CollideMoverAndHeightField( planes, planeCapacity, shape->heightField, &localMover );
+			break;
+
+		case b3_voxelShape:
+			planeCount = b3CollideMoverAndVoxels( planes, planeCapacity, shape->voxels, &localMover );
 			break;
 
 		default:

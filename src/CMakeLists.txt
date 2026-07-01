@@ -88,6 +88,7 @@ set(BOX3D_SOURCE_FILES
 	voxels_consts.h
 	voxels_contact.c
 	voxels_contact.h
+	voxels_query.c
 	voxels_voxels_contact.c
 	weld_joint.c
 	wheel_joint.c
