@@ -42,7 +42,10 @@ static bool b3VoxelPairAllowed( b3VoxelType t1, b3VoxelType t2 )
 
 static bool b3PointInVoxelBox( b3Vec3 point, b3Vec3 center, b3Vec3 radius )
 {
-	const float eps = 1e-2f;
+	// Cap the membership epsilon at a fraction of the voxel radius so it does not degenerate to
+	// always-true for very small voxels (matches b3PointInVoxel in voxels_contact.c).
+	float minR = b3MinFloat( radius.x, b3MinFloat( radius.y, radius.z ) );
+	float eps = b3MinFloat( 1e-2f, 0.25f * minR );
 	b3Vec3 d = b3Abs( b3Sub( point, center ) );
 	return d.x <= radius.x + eps && d.y <= radius.y + eps && d.z <= radius.z + eps;
 }
@@ -80,6 +83,7 @@ bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact*
 	b3Vec3 radius2 = b3MulSV( 0.5f, g2->voxelSize );
 	float half1 = b3MinFloat( radius1.x, b3MinFloat( radius1.y, radius1.z ) );
 	float half2 = b3MinFloat( radius2.x, b3MinFloat( radius2.y, radius2.z ) );
+	float v1SizeMax = b3MaxFloat( g1->voxelSize.x, b3MaxFloat( g1->voxelSize.y, g1->voxelSize.z ) );
 
 	// Relative transforms.
 	b3Transform pos12 = b3InvMulWorldTransforms( xfA, xfB ); // shapeB -> shapeA local
@@ -107,7 +111,17 @@ bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact*
 	int y1 = range1.maxs.y > g1->cy ? g1->cy : range1.maxs.y;
 	int z1 = range1.maxs.z > g1->cz ? g1->cz : range1.maxs.z;
 
-	int maxPairs = ( x1 - x0 ) * ( y1 - y0 ) * ( z1 - z0 ) * 8;
+	// Upper bound on emitted manifolds. Each grid1 voxel in the range can pair with several grid2
+	// voxels; when grid2 is finer than grid1 that count is unbounded by a constant, so size the
+	// scratch by the full grid2 candidate span per grid1 voxel and additionally hard-cap every write
+	// below (a defensive guard against any undercount — overflowing the arena would corrupt memory).
+	int g1RangeVoxels = ( x1 - x0 ) * ( y1 - y0 ) * ( z1 - z0 );
+	// grid2 cells spanned by one grid1 voxel grown by (radius1 + half2), per axis, plus slack.
+	int g2PerAxisX = 2 + (int)( ( v1SizeMax + g2->voxelSize.x ) / g2->voxelSize.x );
+	int g2PerAxisY = 2 + (int)( ( v1SizeMax + g2->voxelSize.y ) / g2->voxelSize.y );
+	int g2PerAxisZ = 2 + (int)( ( v1SizeMax + g2->voxelSize.z ) / g2->voxelSize.z );
+	int g2PerVoxel = g2PerAxisX * g2PerAxisY * g2PerAxisZ;
+	int maxPairs = g1RangeVoxels * g2PerVoxel;
 	if ( maxPairs <= 0 )
 	{
 		if ( contact->manifoldCount > 0 )
@@ -205,6 +219,14 @@ bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact*
 								continue;
 							}
 
+							// Defensive: never write past the scratch buffers even if the size
+							// estimate is wrong. Dropping a contact degrades quality gracefully;
+							// overflowing the arena corrupts memory.
+							if ( collectedCount >= maxPairs || dedupCount >= maxPairs )
+							{
+								goto done_pairs;
+							}
+
 							b3IVec3 key2 = { bx, by, bz };
 							b3Vec3 center2 = b3VoxelsVoxelCenter( g2, bx, by, bz );
 							uint8_t free2 = b3VoxelStateFreeFaces( s2 );
@@ -292,6 +314,7 @@ bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact*
 			}
 		}
 	}
+done_pairs:;
 
 	if ( collectedCount == 0 )
 	{

@@ -1129,6 +1129,15 @@ b3ShapeProxy b3MakeShapeProxy( const b3Shape* shape )
 			return (b3ShapeProxy){ points, hull->vertexCount, 0.0f };
 		}
 
+		case b3_voxelShape:
+		{
+			// A voxel grid has no single convex proxy. For the coarse proxy-based query paths
+			// (sensor visitor, distance, TOI fallback) approximate it with the 8 corners of the
+			// grid AABB, precomputed at creation. Exact per-voxel collision uses the dedicated voxel
+			// routines, not this proxy.
+			return (b3ShapeProxy){ shape->voxels->proxyCorners, 8, 0.0f };
+		}
+
 		default:
 		{
 			B3_ASSERT( false );

@@ -176,6 +176,20 @@ b3Voxels* b3CreateVoxels( const b3VoxelsDef* def )
 	v->localAABB.upperBound.y = v->origin.y + (float)v->cy * v->voxelSize.y;
 	v->localAABB.upperBound.z = v->origin.z + (float)v->cz * v->voxelSize.z;
 
+	// Precompute the 8 AABB corners used by b3MakeShapeProxy for coarse proxy-based queries.
+	{
+		b3Vec3 lo = v->localAABB.lowerBound;
+		b3Vec3 hi = v->localAABB.upperBound;
+		v->proxyCorners[0] = (b3Vec3){ lo.x, lo.y, lo.z };
+		v->proxyCorners[1] = (b3Vec3){ hi.x, lo.y, lo.z };
+		v->proxyCorners[2] = (b3Vec3){ lo.x, hi.y, lo.z };
+		v->proxyCorners[3] = (b3Vec3){ hi.x, hi.y, lo.z };
+		v->proxyCorners[4] = (b3Vec3){ lo.x, lo.y, hi.z };
+		v->proxyCorners[5] = (b3Vec3){ hi.x, lo.y, hi.z };
+		v->proxyCorners[6] = (b3Vec3){ lo.x, hi.y, hi.z };
+		v->proxyCorners[7] = (b3Vec3){ hi.x, hi.y, hi.z };
+	}
+
 	return v;
 }
 

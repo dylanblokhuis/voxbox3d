@@ -105,7 +105,10 @@ static int b3CollideCanonicalWithShape( b3LocalManifold* geomManifold, int capac
 // Returns true if `point` (voxel-local) lies inside the inflated real voxel.
 static bool b3PointInVoxel( b3Vec3 point, b3Vec3 center, b3Vec3 radius )
 {
-	const float eps = 1e-2f;
+	// Parry inflates the test cuboid by an absolute 1e-2. Cap it at a fraction of the voxel radius
+	// so the test does not degenerate to always-true for very small voxels (radius < ~0.04).
+	float minR = b3MinFloat( radius.x, b3MinFloat( radius.y, radius.z ) );
+	float eps = b3MinFloat( 1e-2f, 0.25f * minR );
 	b3Vec3 d = b3Abs( b3Sub( point, center ) );
 	return d.x <= radius.x + eps && d.y <= radius.y + eps && d.z <= radius.z + eps;
 }

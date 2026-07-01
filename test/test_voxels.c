@@ -403,6 +403,57 @@ static int VoxelsBulletDoesNotTunnel( void )
 	return 0;
 }
 
+// A dynamic bullet voxel body must not crash in CCD (b3MakeShapeProxy previously asserted on
+// voxels reached as the fast/shapeB side) and should be stopped by a static wall.
+static int VoxelsDynamicBodyCCD( void )
+{
+	b3WorldDef worldDef = b3DefaultWorldDef();
+	worldDef.gravity = (b3Vec3){ 0.0f, 0.0f, 0.0f };
+	b3WorldId worldId = b3CreateWorld( &worldDef );
+
+	// Static hull wall spanning x in [-0.5, 0.5].
+	b3BodyDef wallDef = b3DefaultBodyDef();
+	b3BodyId wallId = b3CreateBody( worldId, &wallDef );
+	b3BoxHull wall = b3MakeBoxHull( 0.5f, 5.0f, 5.0f );
+	b3ShapeDef wshape = b3DefaultShapeDef();
+	b3CreateHullShape( wallId, &wshape, &wall.base );
+
+	// Fast dynamic VOXEL body fired at the wall.
+	b3BodyDef bulletDef = b3DefaultBodyDef();
+	bulletDef.type = b3_dynamicBody;
+	bulletDef.isBullet = true;
+	bulletDef.gravityScale = 0.0f;
+	bulletDef.position = (b3Pos){ 8.0f, 0.0f, 0.0f };
+	bulletDef.linearVelocity = (b3Vec3){ -150.0f, 0.0f, 0.0f };
+	b3BodyId bulletId = b3CreateBody( worldId, &bulletDef );
+	uint8_t occ[8] = { 1, 1, 1, 1, 1, 1, 1, 1 };
+	b3VoxelsDef vdef = { 0 };
+	vdef.cx = vdef.cy = vdef.cz = 2;
+	vdef.voxelSize = (b3Vec3){ 0.25f, 0.25f, 0.25f };
+	vdef.origin = (b3Vec3){ -0.25f, -0.25f, -0.25f };
+	vdef.occupancy = occ;
+	b3ShapeDef bshape = b3DefaultShapeDef();
+	bshape.density = 1.0f;
+	b3CreateVoxelShape( bulletId, &bshape, &vdef );
+
+	float minX = 8.0f;
+	for ( int i = 0; i < 60; ++i )
+	{
+		b3World_Step( worldId, 1.0f / 60.0f, 4 ); // must not assert/crash
+		b3Pos p = b3Body_GetPosition( bulletId );
+		if ( p.x < minX )
+		{
+			minX = p.x;
+		}
+	}
+
+	b3DestroyWorld( worldId );
+
+	// The voxel bullet must not have tunneled far past the wall back face (x = -0.5).
+	ENSURE( minX > -1.0f );
+	return 0;
+}
+
 int VoxelsTest( void )
 {
 	RUN_SUBTEST( VoxelsClassify );
@@ -413,5 +464,6 @@ int VoxelsTest( void )
 	RUN_SUBTEST( VoxelsBlockRestsOnVoxelFloor );
 	RUN_SUBTEST( VoxelsRayAndOverlap );
 	RUN_SUBTEST( VoxelsBulletDoesNotTunnel );
+	RUN_SUBTEST( VoxelsDynamicBodyCCD );
 	return 0;
 }

@@ -64,6 +64,7 @@ typedef struct b3Voxels
 	b3Vec3 voxelSize;	   // per-axis edge length (each component > 0)
 	b3Vec3 origin;		   // local-space min corner of voxel (0,0,0)
 	b3AABB localAABB;	   // cached bounds of the whole grid
+	b3Vec3 proxyCorners[8]; // 8 corners of localAABB, for b3MakeShapeProxy coarse queries
 } b3Voxels;
 
 // A voxel yielded by iteration.
