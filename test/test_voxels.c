@@ -241,6 +241,66 @@ static int VoxelsBoxRestsOnFloor( void )
 	return 0;
 }
 
+// A small dynamic voxel block dropped onto a static voxel floor must rest on top of it.
+static int VoxelsBlockRestsOnVoxelFloor( void )
+{
+	b3WorldDef worldDef = b3DefaultWorldDef();
+	worldDef.gravity = (b3Vec3){ 0.0f, -10.0f, 0.0f };
+	b3WorldId worldId = b3CreateWorld( &worldDef );
+	ENSURE( b3World_IsValid( worldId ) );
+
+	// Static voxel floor, top surface at y = 0.
+	b3BodyDef groundDef = b3DefaultBodyDef();
+	b3BodyId groundId = b3CreateBody( worldId, &groundDef );
+	int gcx = 8, gcy = 1, gcz = 8;
+	uint8_t gocc[64];
+	for ( int i = 0; i < gcx * gcy * gcz; ++i )
+	{
+		gocc[i] = 1;
+	}
+	b3VoxelsDef gdef = { 0 };
+	gdef.cx = gcx;
+	gdef.cy = gcy;
+	gdef.cz = gcz;
+	gdef.voxelSize = (b3Vec3){ 1.0f, 1.0f, 1.0f };
+	gdef.origin = (b3Vec3){ -4.0f, -1.0f, -4.0f };
+	gdef.occupancy = gocc;
+	b3ShapeDef gshape = b3DefaultShapeDef();
+	b3CreateVoxelShape( groundId, &gshape, &gdef );
+
+	// Dynamic 2x2x2 voxel block dropped from above, centered at origin.
+	b3BodyDef blockDef = b3DefaultBodyDef();
+	blockDef.type = b3_dynamicBody;
+	blockDef.position = (b3Pos){ 0.0f, 3.0f, 0.0f };
+	b3BodyId blockId = b3CreateBody( worldId, &blockDef );
+	uint8_t bocc[8] = { 1, 1, 1, 1, 1, 1, 1, 1 };
+	b3VoxelsDef bdef = { 0 };
+	bdef.cx = bdef.cy = bdef.cz = 2;
+	bdef.voxelSize = (b3Vec3){ 0.5f, 0.5f, 0.5f };
+	bdef.origin = (b3Vec3){ -0.5f, -0.5f, -0.5f }; // block spans [-0.5, 0.5], height 1
+	bdef.occupancy = bocc;
+	b3ShapeDef bshape = b3DefaultShapeDef();
+	bshape.density = 1.0f;
+	bshape.baseMaterial.friction = 0.5f;
+	b3CreateVoxelShape( blockId, &bshape, &bdef );
+
+	float timeStep = 1.0f / 60.0f;
+	for ( int i = 0; i < 150; ++i )
+	{
+		b3World_Step( worldId, timeStep, 4 );
+	}
+	b3Pos position = b3Body_GetPosition( blockId );
+
+	b3DestroyWorld( worldId );
+
+	// Block half-height 0.5 resting on floor top y=0 -> center near y = 0.5.
+	ENSURE_SMALL( position.y - 0.5f, 0.08f );
+	ENSURE_SMALL( position.x, 0.1f );
+	ENSURE_SMALL( position.z, 0.1f );
+
+	return 0;
+}
+
 int VoxelsTest( void )
 {
 	RUN_SUBTEST( VoxelsClassify );
@@ -248,5 +308,6 @@ int VoxelsTest( void )
 	RUN_SUBTEST( VoxelsGeometry );
 	RUN_SUBTEST( VoxelsMassMatchesCuboid );
 	RUN_SUBTEST( VoxelsBoxRestsOnFloor );
+	RUN_SUBTEST( VoxelsBlockRestsOnVoxelFloor );
 	return 0;
 }

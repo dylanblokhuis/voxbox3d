@@ -142,6 +142,7 @@ void b3InitializeContactRegisters( void )
 		b3AddType( b3_voxelShape, b3_sphereShape );
 		b3AddType( b3_voxelShape, b3_capsuleShape );
 		b3AddType( b3_voxelShape, b3_hullShape );
+		b3AddType( b3_voxelShape, b3_voxelShape );
 		s_initialized = true;
 	}
 }
@@ -237,7 +238,9 @@ void b3CreateContact( b3World* world, b3Shape* shapeA, b3Shape* shapeB, int chil
 	}
 
 	// todo impose these restrictions to make life easier
-	B3_ASSERT( shapeB->type == b3_sphereShape || shapeB->type == b3_capsuleShape || shapeB->type == b3_hullShape );
+	// shapeB is a convex primitive, except for the voxels-vs-voxels pair where both are voxels.
+	B3_ASSERT( shapeB->type == b3_sphereShape || shapeB->type == b3_capsuleShape || shapeB->type == b3_hullShape ||
+			   shapeB->type == b3_voxelShape );
 	// B3_ASSERT( bodyB->type != b3_staticBody );
 
 	// Is either body static?
@@ -840,8 +843,16 @@ bool b3UpdateContact( b3World* world, int workerIndex, b3Contact* contact, b3Sha
 	}
 	else if ( shapeA->type == b3_voxelShape )
 	{
-		// Voxels behave like a mesh: multiple manifolds against the convex shapeB.
-		touching = b3ComputeVoxelsManifolds( world, workerIndex, contact, shapeA, xfA, shapeB, xfB, isFast, arena );
+		if ( shapeB->type == b3_voxelShape )
+		{
+			// Voxels vs voxels: symmetric multi-manifold contact.
+			touching = b3ComputeVoxelsVoxelsManifolds( world, workerIndex, contact, shapeA, xfA, shapeB, xfB, isFast, arena );
+		}
+		else
+		{
+			// Voxels behave like a mesh: multiple manifolds against the convex shapeB.
+			touching = b3ComputeVoxelsManifolds( world, workerIndex, contact, shapeA, xfA, shapeB, xfB, isFast, arena );
+		}
 
 		if ( touching && ( shapeA->enableHitEvents || shapeB->enableHitEvents ) )
 		{

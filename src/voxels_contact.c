@@ -22,13 +22,6 @@
 #include <float.h>
 #include <string.h>
 
-// The domain (integer voxel range) spans [0, dim) per axis; expansion clamps to a margin outside.
-typedef struct b3CanonicalVoxel
-{
-	b3IVec3 low;  // canonical cuboid low key
-	b3IVec3 high; // canonical cuboid high key
-} b3CanonicalVoxel;
-
 // Build the canonical voxel range for an exposed voxel. Port of CanonicalVoxelShape::from_voxel.
 //
 // The cuboid is pushed outward to the domain limit along each axis direction whose face is FILLED
@@ -36,7 +29,7 @@ typedef struct b3CanonicalVoxel
 // real voxel. For example a flat-floor voxel with only its +Y face exposed grows into a wide, deep
 // slab whose top face coincides with the voxel top, so a body resting on it gets a clean +Y contact
 // with no internal edges between adjacent top voxels. (Parry: `if !free_faces.contains(axis) { grow }`.)
-static b3CanonicalVoxel b3CanonicalFromVoxel( const b3Voxels* v, b3IVec3 key, uint8_t freeFaces )
+b3CanonicalVoxel b3CanonicalFromVoxel( const b3Voxels* v, b3IVec3 key, uint8_t freeFaces )
 {
 	// Offset the domain by 1 so we can expand past the last voxel (matches parry).
 	b3IVec3 mins = { -1, -1, -1 };
@@ -56,23 +49,23 @@ static b3CanonicalVoxel b3CanonicalFromVoxel( const b3Voxels* v, b3IVec3 key, ui
 	return c;
 }
 
-// Materialize the canonical cuboid as a box hull. Expanded axes are clamped to `domain2_1`
-// (shapeB's AABB grown by a margin) so the "infinite" cuboid stays finite. Port of
+// Materialize the canonical cuboid as a box hull. Expanded axes are clamped to `domain`
+// (the other shape's AABB grown by a margin) so the "infinite" cuboid stays finite. Port of
 // CanonicalVoxelShape::cuboid. Outputs the local-space center and half extents.
-static void b3CanonicalCuboid( const b3Voxels* v, b3IVec3 key, b3CanonicalVoxel canon, b3AABB domain2_1,
-							   b3Vec3* outCenter, b3Vec3* outHalf )
+void b3CanonicalCuboid( const b3Voxels* v, b3IVec3 key, b3CanonicalVoxel canon, b3AABB domain, b3Vec3* outCenter,
+						b3Vec3* outHalf )
 {
 	b3Vec3 radius = b3MulSV( 0.5f, v->voxelSize );
 	b3Vec3 cmin = b3VoxelsCenterKey( v, canon.low );
 	b3Vec3 cmax = b3VoxelsCenterKey( v, canon.high );
 
 	// Clamp expanded sides to the other shape's loosened AABB.
-	if ( canon.low.x != key.x ) cmin.x = b3MaxFloat( cmin.x, domain2_1.lowerBound.x );
-	if ( canon.low.y != key.y ) cmin.y = b3MaxFloat( cmin.y, domain2_1.lowerBound.y );
-	if ( canon.low.z != key.z ) cmin.z = b3MaxFloat( cmin.z, domain2_1.lowerBound.z );
-	if ( canon.high.x != key.x ) cmax.x = b3MinFloat( cmax.x, domain2_1.upperBound.x );
-	if ( canon.high.y != key.y ) cmax.y = b3MinFloat( cmax.y, domain2_1.upperBound.y );
-	if ( canon.high.z != key.z ) cmax.z = b3MinFloat( cmax.z, domain2_1.upperBound.z );
+	if ( canon.low.x != key.x ) cmin.x = b3MaxFloat( cmin.x, domain.lowerBound.x );
+	if ( canon.low.y != key.y ) cmin.y = b3MaxFloat( cmin.y, domain.lowerBound.y );
+	if ( canon.low.z != key.z ) cmin.z = b3MaxFloat( cmin.z, domain.lowerBound.z );
+	if ( canon.high.x != key.x ) cmax.x = b3MinFloat( cmax.x, domain.upperBound.x );
+	if ( canon.high.y != key.y ) cmax.y = b3MinFloat( cmax.y, domain.upperBound.y );
+	if ( canon.high.z != key.z ) cmax.z = b3MinFloat( cmax.z, domain.upperBound.z );
 
 	outHalf->x = 0.5f * ( cmax.x - cmin.x ) + radius.x;
 	outHalf->y = 0.5f * ( cmax.y - cmin.y ) + radius.y;
