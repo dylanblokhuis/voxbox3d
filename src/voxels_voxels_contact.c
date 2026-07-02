@@ -59,15 +59,6 @@ static b3Vec3 b3BoxSupport( b3Vec3 center, b3Vec3 radius, b3Vec3 d )
 	return s;
 }
 
-// One directed pass: for each exposed voxel of gA near shapeB, find nearby exposed voxels of gB and
-// emit a filtered manifold. `dedup` records (idA,idB) pairs already produced (across both passes).
-// Points are produced in gA's local frame. `swap` indicates gA is actually voxels2 (mirror pass) so
-// the emitted manifold and normal must be flipped back to the canonical A=shapeA orientation.
-typedef struct b3VoxelPairKey
-{
-	int a, b;
-} b3VoxelPairKey;
-
 bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact* contact, const b3Shape* shapeA,
 									 b3WorldTransform xfA, const b3Shape* shapeB, b3WorldTransform xfB, bool isFast,
 									 b3Arena arena )
@@ -139,14 +130,13 @@ bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact*
 	b3LocalManifoldPoint* collectedPoints = b3Bump( &arena, maxPairs * B3_MAX_MANIFOLD_POINTS * sizeof( b3LocalManifoldPoint ) );
 	int collectedCount = 0;
 
-	b3VoxelPairKey* dedup = b3Bump( &arena, maxPairs * sizeof( b3VoxelPairKey ) );
-	int dedupCount = 0;
-
 	b3SATCache satCache = { 0 };
 
-	// Single pass over voxels1 x nearby voxels2. (One directed pass is sufficient for correctness
-	// here because we scan the full intersection range of grid1; the dedup guard also protects the
-	// mirror should it be added later.)
+	// Single pass over voxels1 x nearby voxels2. One directed pass is sufficient here: we scan the
+	// full intersection range of grid1, and within this pass every (idA, idB) pair is visited exactly
+	// once (idA is fixed per grid1 voxel, idB is unique per inner loop), so no dedup is needed. If a
+	// mirror pass (voxels2 x nearby voxels1) is ever added, reintroduce a dedup set here — but use a
+	// hash/bitset keyed on the pair, not a linear scan, to avoid O(pairs^2) matching.
 	for ( int z = z0; z < z1; ++z )
 	{
 		for ( int y = y0; y < y1; ++y )
@@ -202,27 +192,11 @@ bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact*
 							}
 
 							int idA = b3VoxelsIndex( g1, x, y, z );
-							int idB = b3VoxelsIndex( g2, bx, by, bz );
-
-							// Dedup guard.
-							bool seen = false;
-							for ( int d = 0; d < dedupCount; ++d )
-							{
-								if ( dedup[d].a == idA && dedup[d].b == idB )
-								{
-									seen = true;
-									break;
-								}
-							}
-							if ( seen )
-							{
-								continue;
-							}
 
 							// Defensive: never write past the scratch buffers even if the size
 							// estimate is wrong. Dropping a contact degrades quality gracefully;
 							// overflowing the arena corrupts memory.
-							if ( collectedCount >= maxPairs || dedupCount >= maxPairs )
+							if ( collectedCount >= maxPairs )
 							{
 								goto done_pairs;
 							}
@@ -304,9 +278,6 @@ bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact*
 							if ( out->pointCount > 0 )
 							{
 								collectedCount += 1;
-								dedup[dedupCount].a = idA;
-								dedup[dedupCount].b = idB;
-								dedupCount += 1;
 							}
 						}
 					}

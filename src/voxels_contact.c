@@ -124,17 +124,15 @@ static b3Vec3 b3VoxelSupport( b3Vec3 center, b3Vec3 radius, b3Vec3 d )
 }
 
 // Support point of shapeB, expressed in the voxel-local frame (frame A), along direction dirA.
-// transformBtoA maps shapeB-local space into frame A.
-static b3Vec3 b3SupportShapeBinA( const b3Shape* shapeB, b3Transform transformBtoA, b3Vec3 dirA )
+// `proxy` is shapeB's proxy and `R` is the rotation of transformBtoA (shapeB-local -> frame A);
+// both are invariant across the voxel loop and are precomputed once by the caller.
+static b3Vec3 b3SupportShapeBinA( const b3ShapeProxy* proxy, b3Matrix3 R, b3Transform transformBtoA, b3Vec3 dirA )
 {
-	b3ShapeProxy proxy = b3MakeShapeProxy( shapeB );
-	b3Matrix3 R = b3MakeMatrixFromQuat( transformBtoA.q );
-
 	float best = -FLT_MAX;
 	b3Vec3 bestP = b3Vec3_zero;
-	for ( int i = 0; i < proxy.count; ++i )
+	for ( int i = 0; i < proxy->count; ++i )
 	{
-		b3Vec3 pA = b3Add( b3MulMV( R, proxy.points[i] ), transformBtoA.p );
+		b3Vec3 pA = b3Add( b3MulMV( R, proxy->points[i] ), transformBtoA.p );
 		float dot = b3Dot( pA, dirA );
 		if ( dot > best )
 		{
@@ -143,9 +141,9 @@ static b3Vec3 b3SupportShapeBinA( const b3Shape* shapeB, b3Transform transformBt
 		}
 	}
 	// Account for the proxy's external radius (sphere/capsule).
-	if ( proxy.radius > 0.0f )
+	if ( proxy->radius > 0.0f )
 	{
-		bestP = b3MulAdd( bestP, proxy.radius, b3Normalize( dirA ) );
+		bestP = b3MulAdd( bestP, proxy->radius, b3Normalize( dirA ) );
 	}
 	return bestP;
 }
@@ -208,6 +206,11 @@ bool b3ComputeVoxelsManifolds( b3World* world, int workerIndex, b3Contact* conta
 	int collectedCount = 0;
 
 	b3ContactCache localCache = { 0 };
+
+	// Invariant across the voxel loop: shapeB's proxy and the rotation of transformBtoA, used by the
+	// stage-1 support test. Precompute once instead of per manifold point per voxel.
+	b3ShapeProxy proxyB = b3MakeShapeProxy( shapeB );
+	b3Matrix3 rotBtoA = b3MakeMatrixFromQuat( transformBtoA.q );
 
 	for ( int z = z0; z < z1; ++z )
 	{
@@ -273,7 +276,7 @@ bool b3ComputeVoxelsManifolds( b3World* world, int workerIndex, b3Contact* conta
 					if ( p.separation < 0.0f )
 					{
 						b3Vec3 sp1 = b3VoxelSupport( voxelCenter, radius, b3Neg( normalA ) );
-						b3Vec3 sp2 = b3SupportShapeBinA( shapeB, transformBtoA, normalA );
+						b3Vec3 sp2 = b3SupportShapeBinA( &proxyB, rotBtoA, transformBtoA, normalA );
 						float testDist = b3Dot( b3Sub( sp2, sp1 ), b3Neg( normalA ) );
 						if ( testDist >= p.separation )
 						{
