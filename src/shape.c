@@ -13,6 +13,7 @@
 // needed for dll export
 #include "aabb.h"
 #include "compound.h"
+#include "voxels.h"
 
 #include "box3d/box3d.h"
 
@@ -69,6 +70,16 @@ static float b3ComputeShapeMargin( b3Shape* shape )
 			// Return the cap so any incidental use is generous.
 			return B3_MAX_AABB_MARGIN;
 		}
+
+		case b3_voxelShape:
+		{
+			// Voxels may be dynamic. Base the margin on the largest voxel edge, matching
+			// ccd_thickness semantics — the margin should cover a single voxel's motion, not
+			// the whole grid (which could be arbitrarily large).
+			const b3Voxels* v = shape->voxels;
+			margin = b3MaxFloat( v->voxelSize.x, b3MaxFloat( v->voxelSize.y, v->voxelSize.z ) );
+		}
+		break;
 
 		default:
 			B3_VALIDATE( false );
@@ -163,6 +174,10 @@ static b3Shape* b3CreateShapeInternal( b3World* world, b3Body* body, b3WorldTran
 
 		case b3_heightShape:
 			shape->heightField = (b3HeightFieldData*)geometry;
+			break;
+
+		case b3_voxelShape:
+			shape->voxels = b3CreateVoxels( (const b3VoxelsDef*)geometry );
 			break;
 
 		default:
@@ -436,6 +451,13 @@ b3ShapeId b3CreateCompoundShape( b3BodyId bodyId, b3ShapeDef* def, const b3Compo
 	return shapeId;
 }
 
+b3ShapeId b3CreateVoxelShape( b3BodyId bodyId, const b3ShapeDef* def, const b3VoxelsDef* voxels )
+{
+	b3ShapeId shapeId = b3CreateShape( bodyId, def, voxels, b3_voxelShape, b3Transform_identity, b3Vec3_one, false );
+	// todo recording support is added in Phase 6.
+	return shapeId;
+}
+
 // Destroy a shape on a body. This doesn't need to be called when destroying a body.
 static void b3DestroyShapeInternal( b3World* world, b3Shape* shape, b3Body* body, bool wakeBodies )
 {
@@ -579,6 +601,9 @@ b3AABB b3ComputeShapeAABB( const b3Shape* shape, b3Transform transform )
 		case b3_sphereShape:
 			return b3ComputeSphereAABB( &shape->sphere, transform );
 
+		case b3_voxelShape:
+			return b3AABB_Transform( transform, shape->voxels->localAABB );
+
 		default:
 		{
 			B3_ASSERT( false );
@@ -625,6 +650,14 @@ b3AABB b3ComputeSweptShapeAABB( const b3Shape* shape, const b3Sweep* sweep, floa
 		case b3_sphereShape:
 			return b3ComputeSweptSphereAABB( &shape->sphere, xf1, xf2 );
 
+		case b3_voxelShape:
+		{
+			// Union of the oriented grid AABB at both ends of the sweep.
+			b3AABB a1 = b3AABB_Transform( xf1, shape->voxels->localAABB );
+			b3AABB a2 = b3AABB_Transform( xf2, shape->voxels->localAABB );
+			return b3AABB_Union( a1, a2 );
+		}
+
 		default:
 			B3_ASSERT( false );
 			return (b3AABB){ xf1.p, xf1.p };
@@ -656,6 +689,8 @@ b3Vec3 b3GetShapeCentroid( const b3Shape* shape )
 			b3AABB aabb = b3ComputeHeightFieldAABB( shape->heightField, b3Transform_identity );
 			return b3AABB_Center( aabb );
 		}
+		case b3_voxelShape:
+			return b3VoxelsCentroid( shape->voxels );
 		default:
 			return b3Vec3_zero;
 	}
@@ -675,6 +710,9 @@ float b3GetShapeArea( const b3Shape* shape )
 
 		case b3_sphereShape:
 			return 2.0f * B3_PI * shape->sphere.radius;
+
+		case b3_voxelShape:
+			return b3VoxelsSurfaceArea( shape->voxels );
 
 		default:
 			return 0.0f;
@@ -702,6 +740,9 @@ float b3GetShapeProjectedArea( const b3Shape* shape, b3Vec3 planeNormal )
 		case b3_sphereShape:
 			return B3_PI * shape->sphere.radius * shape->sphere.radius;
 
+		case b3_voxelShape:
+			return b3VoxelsProjectedArea( shape->voxels, planeNormal );
+
 		default:
 			return 0.0f;
 	}
@@ -719,6 +760,9 @@ b3MassData b3ComputeShapeMass( const b3Shape* shape )
 
 		case b3_sphereShape:
 			return b3ComputeSphereMass( &shape->sphere, shape->density );
+
+		case b3_voxelShape:
+			return b3ComputeVoxelsMass( shape->voxels, shape->density );
 
 		default:
 			return (b3MassData){ 0 };
@@ -780,6 +824,18 @@ b3ShapeExtent b3ComputeShapeExtent( const b3Shape* shape, b3Vec3 localCenter )
 		}
 		break;
 
+		case b3_voxelShape:
+		{
+			// Needed for kinematic/dynamic voxel sleeping. AABB-based like the mesh case.
+			b3AABB aabb = shape->voxels->localAABB;
+			float r1 = b3Length( b3Sub( aabb.lowerBound, localCenter ) );
+			float r2 = b3Length( b3Sub( aabb.upperBound, localCenter ) );
+			extent.minExtent = b3MinFloat( r1, r2 );
+			b3Vec3 p = b3FarthestPointOnAABB( aabb, localCenter );
+			extent.maxExtent = b3Abs( b3Sub( p, localCenter ) );
+		}
+		break;
+
 		default:
 			break;
 	}
@@ -813,6 +869,9 @@ b3CastOutput b3RayCastShape( const b3Shape* shape, b3Transform transform, const 
 			break;
 		case b3_heightShape:
 			output = b3RayCastHeightField( shape->heightField, &localInput );
+			break;
+		case b3_voxelShape:
+			output = b3RayCastVoxels( shape->voxels, &localInput );
 			break;
 		default:
 			return output;
@@ -863,6 +922,9 @@ b3CastOutput b3ShapeCastShape( const b3Shape* shape, b3Transform transform, cons
 		case b3_sphereShape:
 			output = b3ShapeCastSphere( &shape->sphere, &localInput );
 			break;
+		case b3_voxelShape:
+			output = b3ShapeCastVoxels( shape->voxels, &localInput );
+			break;
 		default:
 			return output;
 	}
@@ -894,6 +956,9 @@ bool b3OverlapShape( const b3Shape* shape, b3Transform transform, const b3ShapeP
 
 		case b3_sphereShape:
 			return b3OverlapSphere( &shape->sphere, transform, proxy );
+
+		case b3_voxelShape:
+			return b3OverlapVoxels( shape->voxels, transform, proxy );
 
 		default:
 			B3_ASSERT( false );
@@ -967,6 +1032,10 @@ int b3CollideMover( b3PlaneResult* planes, int planeCapacity, const b3Shape* sha
 			planeCount = b3CollideMoverAndHeightField( planes, planeCapacity, shape->heightField, &localMover );
 			break;
 
+		case b3_voxelShape:
+			planeCount = b3CollideMoverAndVoxels( planes, planeCapacity, shape->voxels, &localMover );
+			break;
+
 		default:
 			B3_ASSERT( false );
 			break;
@@ -1012,6 +1081,11 @@ static void b3DestroyShapeAllocationForShapeChange( b3World* world, b3Shape* sha
 			shape->hull = NULL;
 			break;
 
+		case b3_voxelShape:
+			b3DestroyVoxels( shape->voxels );
+			shape->voxels = NULL;
+			break;
+
 		default:
 			break;
 	}
@@ -1053,6 +1127,15 @@ b3ShapeProxy b3MakeShapeProxy( const b3Shape* shape )
 			const b3HullData* hull = shape->hull;
 			const b3Vec3* points = b3GetHullPoints( hull );
 			return (b3ShapeProxy){ points, hull->vertexCount, 0.0f };
+		}
+
+		case b3_voxelShape:
+		{
+			// A voxel grid has no single convex proxy. For the coarse proxy-based query paths
+			// (sensor visitor, distance, TOI fallback) approximate it with the 8 corners of the
+			// grid AABB, precomputed at creation. Exact per-voxel collision uses the dedicated voxel
+			// routines, not this proxy.
+			return (b3ShapeProxy){ shape->voxels->proxyCorners, 8, 0.0f };
 		}
 
 		default:
@@ -2228,6 +2311,76 @@ b3TOIOutput b3ShapeTimeOfImpact( b3Shape* shapeA, b3Shape* shapeB, b3Sweep* swee
 		b3QueryCompound( shapeA->compound, localBounds, b3CompoundTimeOfImpactFcn, &context );
 
 		return context.toiOutput;
+	}
+
+	if ( typeA == b3_voxelShape )
+	{
+		// Assume the voxel shape is static (the parry port makes the same simplification for the
+		// nonlinear sweep). Iterate the filled voxel boxes in shapeB's swept bounds and keep the
+		// earliest time of impact, delegating each box to the convex TOI.
+		const b3Voxels* v = shapeA->voxels;
+
+		b3TOIInput input;
+		input.proxyB = b3MakeShapeProxy( shapeB );
+		input.sweepB = *sweepB;
+		input.maxFraction = maxFraction;
+
+		b3Transform xfA = {
+			.p = b3Sub( sweepA->c1, b3RotateVector( sweepA->q1, sweepA->localCenter ) ),
+			.q = sweepA->q1,
+		};
+
+		// Swept bounds of shapeB, in the voxel-local frame.
+		b3AABB bounds = b3ComputeSweptShapeAABB( shapeB, sweepB, maxFraction );
+		b3AABB localBounds = b3AABB_Transform( b3InvertTransform( xfA ), bounds );
+
+		b3VoxelRange range = b3VoxelsRangeIntersectingAABB( v, localBounds );
+		int x0 = range.mins.x < 0 ? 0 : range.mins.x;
+		int y0 = range.mins.y < 0 ? 0 : range.mins.y;
+		int z0 = range.mins.z < 0 ? 0 : range.mins.z;
+		int x1 = range.maxs.x > v->cx ? v->cx : range.maxs.x;
+		int y1 = range.maxs.y > v->cy ? v->cy : range.maxs.y;
+		int z1 = range.maxs.z > v->cz ? v->cz : range.maxs.z;
+
+		b3TOIOutput best = { 0 };
+		best.fraction = maxFraction;
+		bool anyHit = false;
+
+		for ( int z = z0; z < z1; ++z )
+		{
+			for ( int y = y0; y < y1; ++y )
+			{
+				for ( int x = x0; x < x1; ++x )
+				{
+					b3VoxelState s = b3VoxelsState( v, x, y, z );
+					if ( b3VoxelStateIsEmpty( s ) || b3VoxelStateType( s ) == b3_voxelTypeInterior )
+					{
+						continue;
+					}
+
+					b3BoxHull box = b3MakeTransformedBoxHull( 0.5f * v->voxelSize.x, 0.5f * v->voxelSize.y,
+															  0.5f * v->voxelSize.z,
+															  (b3Transform){ b3VoxelsVoxelCenter( v, x, y, z ), b3Quat_identity } );
+					input.proxyA = (b3ShapeProxy){ b3GetHullPoints( &box.base ), box.base.vertexCount, 0.0f };
+					input.sweepA = *sweepA;
+					input.maxFraction = best.fraction;
+
+					b3TOIOutput output = b3TimeOfImpact( &input );
+					if ( output.state == b3_toiStateHit && output.fraction < best.fraction )
+					{
+						best = output;
+						anyHit = true;
+					}
+				}
+			}
+		}
+
+		if ( !anyHit )
+		{
+			best.state = b3_toiStateSeparated;
+			best.fraction = maxFraction;
+		}
+		return best;
 	}
 
 	if ( typeA == b3_heightShape || typeA == b3_meshShape )

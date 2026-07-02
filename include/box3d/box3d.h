@@ -818,6 +818,12 @@ B3_API b3ShapeId b3CreateHeightFieldShape( b3BodyId bodyId, const b3ShapeDef* de
 /// Compound shapes are only allowed on static bodies.
 B3_API b3ShapeId b3CreateCompoundShape( b3BodyId bodyId, b3ShapeDef* def, const b3CompoundData* compound );
 
+/// Create a voxel grid shape and attach it to a body. The occupancy grid in the definition is
+/// cloned into the runtime shape. Voxel shapes may be placed on static, kinematic, or dynamic bodies.
+/// Contacts are not created until the next time step.
+/// @return the shape id for accessing the shape
+B3_API b3ShapeId b3CreateVoxelShape( b3BodyId bodyId, const b3ShapeDef* def, const b3VoxelsDef* voxels );
+
 /// Destroy a shape. You may defer the body mass update which can improve performance if several shapes on a
 ///	body are destroyed at once.
 ///	@see b3Body_ApplyMassFromShapes

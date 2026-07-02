@@ -41,6 +41,9 @@ typedef void b3FinishTaskCallback( void* userTask, void* userContext );
 
 typedef struct b3DebugShape b3DebugShape;
 
+// Forward declaration of the runtime voxel grid (full definition is internal, src/voxels.h).
+typedef struct b3Voxels b3Voxels;
+
 /// The user needs to be able to create debug draw shapes for multi-pass rendering to work efficiently.
 /// These user shapes are created and destroyed via callback so they can be bound to shape lifetime and scaling updates.
 /// @ingroup debug_draw
@@ -446,6 +449,9 @@ typedef enum b3ShapeType
 
 	/// A sphere with an offset
 	b3_sphereShape,
+
+	/// A voxel grid (destructible block terrain)
+	b3_voxelShape,
 
 	/// The number of shape types
 	b3_shapeTypeCount
@@ -2541,6 +2547,32 @@ typedef bool b3CompoundQueryFcn( const b3CompoundData* compound, int childIndex,
 
 /**@}*/ // compound
 
+/**
+ * @defgroup voxels Voxels
+ * @brief Voxel grid collision shape
+ * @{
+ */
+
+/// Definition used to create a voxel shape. The occupancy grid is cloned into the runtime shape;
+/// mutate it later through the internal `b3Voxels` API.
+typedef struct b3VoxelsDef
+{
+	/// Grid dimensions (voxel counts). Each must be >= 1.
+	int cx, cy, cz;
+
+	/// Per-axis voxel edge length. Each component must be > 0.
+	b3Vec3 voxelSize;
+
+	/// Local-space min corner of voxel (0,0,0).
+	b3Vec3 origin;
+
+	/// Occupancy grid, `cx*cy*cz` entries, index = x + y*cx + z*cx*cy. Nonzero means filled.
+	/// May be NULL to create an all-empty grid (then fill via b3VoxelsSetVoxel).
+	const uint8_t* occupancy;
+} b3VoxelsDef;
+
+/**@}*/ // voxels
+
 /**@}*/ // geometry
 
 /**
@@ -2938,6 +2970,7 @@ typedef struct b3DebugShape
 		const b3HullData* hull;			  ///< Convex hull shape.
 		const b3Mesh* mesh;				  ///< Mesh shape with scale.
 		const b3Sphere* sphere;			  ///< Sphere shape.
+		const b3Voxels* voxels;		  ///< Voxel grid shape.
 	};
 } b3DebugShape;
 
