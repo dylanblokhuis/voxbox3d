@@ -172,6 +172,7 @@ set(SAMPLE_FILES
     sample_shapes.cpp
     sample_stacking.cpp
     sample_tree.cpp
+    sample_voxels.cpp
     sample_world.cpp
 )
 
