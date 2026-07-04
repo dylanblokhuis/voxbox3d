@@ -184,6 +184,11 @@ bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact*
 				b3Vec3 cc1, ch1;
 				b3CanonicalCuboid( g1, key1, canon1, domain2_1, &cc1, &ch1 );
 
+				// box1 depends only on this grid1 voxel, so build it once here rather than rebuilding
+				// it for every candidate voxel2 in the inner loop. Axis-aligned at the origin; the
+				// relative pose is folded into box2InBox1 below.
+				b3BoxHull box1 = b3MakeCollisionBoxHull( ch1.x, ch1.y, ch1.z );
+
 				for ( int bz = az0; bz < az1; ++bz )
 				{
 					for ( int by = ay0; by < ay1; ++by )
@@ -234,12 +239,10 @@ bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact*
 							b3Vec3 cc2, ch2;
 							b3CanonicalCuboid( g2, key2, canon2, domain1_2, &cc2, &ch2 );
 
-							// Build both boxes and their relative transform. Box1 is at cc1 in g1
-							// frame (identity rot); box2 is at cc2 in g2 frame. Relative pose of box2
-							// in box1's frame: T(-cc1) * pos12 * T(cc2).
-							b3Transform box1Xf = { cc1, b3Quat_identity };
-							b3BoxHull box1 = b3MakeTransformedBoxHull( ch1.x, ch1.y, ch1.z, (b3Transform){ b3Vec3_zero, b3Quat_identity } );
-							b3BoxHull box2 = b3MakeTransformedBoxHull( ch2.x, ch2.y, ch2.z, (b3Transform){ b3Vec3_zero, b3Quat_identity } );
+							// Build box2 (box1 was built once per grid1 voxel above) and their relative
+							// transform. Box1 is at cc1 in g1 frame (identity rot); box2 is at cc2 in
+							// g2 frame. Relative pose of box2 in box1's frame: T(-cc1) * pos12 * T(cc2).
+							b3BoxHull box2 = b3MakeCollisionBoxHull( ch2.x, ch2.y, ch2.z );
 
 							// pos12 maps g2 local -> g1 local. Compose: box2 center in box1 frame.
 							b3Transform t_c2 = { cc2, b3Quat_identity };
@@ -250,7 +253,6 @@ bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact*
 							b3LocalManifold geom = { 0 };
 							geom.points = pointBuffer;
 							b3CollideHulls( &geom, pointCapacity, &box1.base, &box2.base, box2InBox1, &satCache );
-							B3_UNUSED( box1Xf );
 							if ( geom.pointCount == 0 )
 							{
 								continue;

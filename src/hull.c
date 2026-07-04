@@ -2675,6 +2675,48 @@ static const b3BoxHull s_boxHull = {
 		},
 };
 
+// Axis-aligned box hull centered at the origin, for transient collision-only use. Skips three things
+// the narrow-phase collide routines never read: the content hash (a struct-wide byte hash), the
+// inertia tensor, and — because the box is at identity pose — all the per-plane/per-point transform
+// math (b3TransformPlane / b3TransformPoint reduce to the identity). The voxel narrow phase builds one
+// such box per candidate voxel (the canonical cuboid) with the partner shape moved into the box frame,
+// so this removes a large constant per-voxel cost. Equivalent to
+// b3MakeTransformedBoxHull(hx, hy, hz, identity) minus the hash and inertia.
+b3BoxHull b3MakeCollisionBoxHull( float hx, float hy, float hz )
+{
+	b3BoxHull boxHull = s_boxHull;
+
+	float minH = 0.2f * B3_LINEAR_SLOP;
+	b3Vec3 h = b3Max( (b3Vec3){ minH, minH, minH }, (b3Vec3){ hx, hy, hz } );
+	b3Vec3 lower = b3Neg( h );
+	b3Vec3 upper = h;
+
+	boxHull.base.aabb = (b3AABB){ lower, upper };
+	boxHull.base.surfaceArea = 8.0f * ( h.x * h.y + h.x * h.z + h.y * h.z );
+	boxHull.base.volume = 8.0f * h.x * h.y * h.z;
+	boxHull.base.innerRadius = b3MinFloat( h.x, b3MinFloat( h.y, h.z ) );
+	boxHull.base.center = b3Vec3_zero;
+
+	// Identity pose: b3TransformPlane / b3TransformPoint collapse to the plane / point itself.
+	boxHull.boxPlanes[0] = b3MakePlaneFromNormalAndPoint( b3Neg( b3Vec3_axisX ), lower );
+	boxHull.boxPlanes[1] = b3MakePlaneFromNormalAndPoint( b3Vec3_axisX, upper );
+	boxHull.boxPlanes[2] = b3MakePlaneFromNormalAndPoint( b3Neg( b3Vec3_axisY ), lower );
+	boxHull.boxPlanes[3] = b3MakePlaneFromNormalAndPoint( b3Vec3_axisY, upper );
+	boxHull.boxPlanes[4] = b3MakePlaneFromNormalAndPoint( b3Neg( b3Vec3_axisZ ), lower );
+	boxHull.boxPlanes[5] = b3MakePlaneFromNormalAndPoint( b3Vec3_axisZ, upper );
+
+	boxHull.boxPoints[0] = (b3Vec3){ h.x, h.y, h.z };
+	boxHull.boxPoints[1] = (b3Vec3){ -h.x, h.y, h.z };
+	boxHull.boxPoints[2] = (b3Vec3){ -h.x, -h.y, h.z };
+	boxHull.boxPoints[3] = (b3Vec3){ h.x, -h.y, h.z };
+	boxHull.boxPoints[4] = (b3Vec3){ h.x, h.y, -h.z };
+	boxHull.boxPoints[5] = (b3Vec3){ -h.x, h.y, -h.z };
+	boxHull.boxPoints[6] = (b3Vec3){ -h.x, -h.y, -h.z };
+	boxHull.boxPoints[7] = (b3Vec3){ h.x, -h.y, -h.z };
+
+	return boxHull;
+}
+
 b3BoxHull b3MakeTransformedBoxHull( float hx, float hy, float hz, b3Transform transform )
 {
 	b3BoxHull boxHull = s_boxHull;

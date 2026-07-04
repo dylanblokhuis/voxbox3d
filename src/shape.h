@@ -109,6 +109,10 @@ int b3CollideMover( b3PlaneResult* planes, int planeCapacity, const b3Shape* sha
 					const b3Capsule* mover );
 
 // Hull
+// Transient collision-only box hull, axis-aligned at the origin: like b3MakeTransformedBoxHull with an
+// identity pose but skipping the inertia tensor, content hash, and pose transform math (none of which
+// the narrow-phase collide routines read). Used once per voxel in the voxel narrow phase.
+b3BoxHull b3MakeCollisionBoxHull( float hx, float hy, float hz );
 int b3FindHullSupportVertex( const b3HullData* hull, b3Vec3 direction );
 int b3FindHullSupportFace( const b3HullData* hull, b3Vec3 direction );
 bool b3IsValidHull( const b3HullData* hull );
