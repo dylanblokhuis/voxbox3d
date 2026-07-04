@@ -59,6 +59,15 @@ static b3Vec3 b3BoxSupport( b3Vec3 center, b3Vec3 radius, b3Vec3 d )
 	return s;
 }
 
+// One directed pass: for each exposed voxel of gA near shapeB, find nearby exposed voxels of gB and
+// emit a filtered manifold. `dedup` records (idA,idB) pairs already produced (across both passes).
+// Points are produced in gA's local frame. `swap` indicates gA is actually voxels2 (mirror pass) so
+// the emitted manifold and normal must be flipped back to the canonical A=shapeA orientation.
+typedef struct b3VoxelPairKey
+{
+	int a, b;
+} b3VoxelPairKey;
+
 bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact* contact, const b3Shape* shapeA,
 									 b3WorldTransform xfA, const b3Shape* shapeB, b3WorldTransform xfB, bool isFast,
 									 b3Arena arena )
@@ -130,13 +139,14 @@ bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact*
 	b3LocalManifoldPoint* collectedPoints = b3Bump( &arena, maxPairs * B3_MAX_MANIFOLD_POINTS * sizeof( b3LocalManifoldPoint ) );
 	int collectedCount = 0;
 
+	b3VoxelPairKey* dedup = b3Bump( &arena, maxPairs * sizeof( b3VoxelPairKey ) );
+	int dedupCount = 0;
+
 	b3SATCache satCache = { 0 };
 
-	// Single pass over voxels1 x nearby voxels2. One directed pass is sufficient here: we scan the
-	// full intersection range of grid1, and within this pass every (idA, idB) pair is visited exactly
-	// once (idA is fixed per grid1 voxel, idB is unique per inner loop), so no dedup is needed. If a
-	// mirror pass (voxels2 x nearby voxels1) is ever added, reintroduce a dedup set here — but use a
-	// hash/bitset keyed on the pair, not a linear scan, to avoid O(pairs^2) matching.
+	// Single pass over voxels1 x nearby voxels2. (One directed pass is sufficient for correctness
+	// here because we scan the full intersection range of grid1; the dedup guard also protects the
+	// mirror should it be added later.)
 	for ( int z = z0; z < z1; ++z )
 	{
 		for ( int y = y0; y < y1; ++y )
@@ -174,6 +184,11 @@ bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact*
 				b3Vec3 cc1, ch1;
 				b3CanonicalCuboid( g1, key1, canon1, domain2_1, &cc1, &ch1 );
 
+				// box1 depends only on this grid1 voxel, so build it once here rather than rebuilding
+				// it for every candidate voxel2 in the inner loop. Axis-aligned at the origin; the
+				// relative pose is folded into box2InBox1 below.
+				b3BoxHull box1 = b3MakeCollisionBoxHull( ch1.x, ch1.y, ch1.z );
+
 				for ( int bz = az0; bz < az1; ++bz )
 				{
 					for ( int by = ay0; by < ay1; ++by )
@@ -192,11 +207,27 @@ bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact*
 							}
 
 							int idA = b3VoxelsIndex( g1, x, y, z );
+							int idB = b3VoxelsIndex( g2, bx, by, bz );
+
+							// Dedup guard.
+							bool seen = false;
+							for ( int d = 0; d < dedupCount; ++d )
+							{
+								if ( dedup[d].a == idA && dedup[d].b == idB )
+								{
+									seen = true;
+									break;
+								}
+							}
+							if ( seen )
+							{
+								continue;
+							}
 
 							// Defensive: never write past the scratch buffers even if the size
 							// estimate is wrong. Dropping a contact degrades quality gracefully;
 							// overflowing the arena corrupts memory.
-							if ( collectedCount >= maxPairs )
+							if ( collectedCount >= maxPairs || dedupCount >= maxPairs )
 							{
 								goto done_pairs;
 							}
@@ -208,12 +239,10 @@ bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact*
 							b3Vec3 cc2, ch2;
 							b3CanonicalCuboid( g2, key2, canon2, domain1_2, &cc2, &ch2 );
 
-							// Build both boxes and their relative transform. Box1 is at cc1 in g1
-							// frame (identity rot); box2 is at cc2 in g2 frame. Relative pose of box2
-							// in box1's frame: T(-cc1) * pos12 * T(cc2).
-							b3Transform box1Xf = { cc1, b3Quat_identity };
-							b3BoxHull box1 = b3MakeTransformedBoxHull( ch1.x, ch1.y, ch1.z, (b3Transform){ b3Vec3_zero, b3Quat_identity } );
-							b3BoxHull box2 = b3MakeTransformedBoxHull( ch2.x, ch2.y, ch2.z, (b3Transform){ b3Vec3_zero, b3Quat_identity } );
+							// Build box2 (box1 was built once per grid1 voxel above) and their relative
+							// transform. Box1 is at cc1 in g1 frame (identity rot); box2 is at cc2 in
+							// g2 frame. Relative pose of box2 in box1's frame: T(-cc1) * pos12 * T(cc2).
+							b3BoxHull box2 = b3MakeCollisionBoxHull( ch2.x, ch2.y, ch2.z );
 
 							// pos12 maps g2 local -> g1 local. Compose: box2 center in box1 frame.
 							b3Transform t_c2 = { cc2, b3Quat_identity };
@@ -224,7 +253,6 @@ bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact*
 							b3LocalManifold geom = { 0 };
 							geom.points = pointBuffer;
 							b3CollideHulls( &geom, pointCapacity, &box1.base, &box2.base, box2InBox1, &satCache );
-							B3_UNUSED( box1Xf );
 							if ( geom.pointCount == 0 )
 							{
 								continue;
@@ -278,6 +306,9 @@ bool b3ComputeVoxelsVoxelsManifolds( b3World* world, int workerIndex, b3Contact*
 							if ( out->pointCount > 0 )
 							{
 								collectedCount += 1;
+								dedup[dedupCount].a = idA;
+								dedup[dedupCount].b = idB;
+								dedupCount += 1;
 							}
 						}
 					}

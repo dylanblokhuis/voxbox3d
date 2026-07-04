@@ -73,16 +73,15 @@ void b3CanonicalCuboid( const b3Voxels* v, b3IVec3 key, b3CanonicalVoxel canon, 
 	*outCenter = b3Lerp( cmin, cmax, 0.5f );
 }
 
-// Collide a canonical box hull (in voxel-local frame, centered at `center`) against shapeB.
-// The box is placed at identity rotation, translated to `center`. Fills geomManifold in frame A
-// (voxel-local). Returns point count.
-static int b3CollideCanonicalWithShape( b3LocalManifold* geomManifold, int capacity, b3Vec3 center, b3Vec3 half,
+// Collide a canonical box hull (axis-aligned at the origin of the box frame) against shapeB.
+// The caller has already moved shapeB into that box frame via transformBtoA. Fills geomManifold in
+// the box frame. Returns point count.
+static int b3CollideCanonicalWithShape( b3LocalManifold* geomManifold, int capacity, b3Vec3 half,
 										const b3Shape* shapeB, b3Transform transformBtoA, b3ContactCache* cache )
 {
-	b3Transform boxXf = { center, b3Quat_identity };
-	b3BoxHull box = b3MakeTransformedBoxHull( half.x, half.y, half.z, boxXf );
+	b3BoxHull box = b3MakeCollisionBoxHull( half.x, half.y, half.z );
 
-	// transformBtoA maps shapeB into the voxel-local frame, which is also the box's frame.
+	// transformBtoA maps shapeB into the box frame (identity pose, origin-centered).
 	switch ( shapeB->type )
 	{
 		case b3_sphereShape:
@@ -124,8 +123,8 @@ static b3Vec3 b3VoxelSupport( b3Vec3 center, b3Vec3 radius, b3Vec3 d )
 }
 
 // Support point of shapeB, expressed in the voxel-local frame (frame A), along direction dirA.
-// `proxy` is shapeB's proxy and `R` is the rotation of transformBtoA (shapeB-local -> frame A);
-// both are invariant across the voxel loop and are precomputed once by the caller.
+// transformBtoA maps shapeB-local space into frame A. The proxy and R = mat(transformBtoA.q) are
+// loop-invariant across all voxels/points, so the caller precomputes them once and passes them in.
 static b3Vec3 b3SupportShapeBinA( const b3ShapeProxy* proxy, b3Matrix3 R, b3Transform transformBtoA, b3Vec3 dirA )
 {
 	float best = -FLT_MAX;
@@ -207,10 +206,22 @@ bool b3ComputeVoxelsManifolds( b3World* world, int workerIndex, b3Contact* conta
 
 	b3ContactCache localCache = { 0 };
 
-	// Invariant across the voxel loop: shapeB's proxy and the rotation of transformBtoA, used by the
-	// stage-1 support test. Precompute once instead of per manifold point per voxel.
+	// Loop-invariant inputs to the stage-1 penetration filter (b3SupportShapeBinA), hoisted out of
+	// the per-voxel / per-point inner loops.
 	b3ShapeProxy proxyB = b3MakeShapeProxy( shapeB );
-	b3Matrix3 rotBtoA = b3MakeMatrixFromQuat( transformBtoA.q );
+	b3Matrix3 matrixBtoA = b3MakeMatrixFromQuat( transformBtoA.q );
+
+	// Memoize the box-vs-shapeB geometry manifold across voxels that share the same canonical cuboid.
+	// A canonical cuboid's integer range depends only on a voxel's free faces and its position along
+	// those free axes, so across a flat contact region every exposed voxel yields the identical cuboid
+	// — and thus the identical geometry manifold. Only the per-voxel filtering below differs. Computing
+	// the box-vs-shapeB SAT/clip once per distinct cuboid instead of once per voxel is the dominant
+	// narrow-phase saving (a flat resting box touches hundreds of coplanar voxels sharing one cuboid).
+	b3CanonicalVoxel prevCanon = { 0 };
+	bool havePrevCanon = false;
+	b3LocalManifold geom = { 0 };
+	geom.points = pointBuffer;
+	int count = 0;
 
 	for ( int z = z0; z < z1; ++z )
 	{
@@ -236,14 +247,20 @@ bool b3ComputeVoxelsManifolds( b3World* world, int workerIndex, b3Contact* conta
 				b3Vec3 canonCenter, canonHalf;
 				b3CanonicalCuboid( v, key, canon, domain2_1, &canonCenter, &canonHalf );
 
-				// Move shapeB into the canonical box frame (box is at canonCenter, identity rotation).
-				b3Transform boxToLocal = { canonCenter, b3Quat_identity };
-				b3Transform transformBtoBox = b3InvMulTransforms( boxToLocal, transformBtoA );
+				// Recompute the geometry manifold only when the canonical cuboid changes (see above).
+				// Equal integer canon ranges give bit-identical canonCenter/canonHalf/transformBtoBox,
+				// so the cached geom is exactly what a recompute would produce.
+				if ( !havePrevCanon || memcmp( &canon, &prevCanon, sizeof( canon ) ) != 0 )
+				{
+					// Move shapeB into the canonical box frame (box is at canonCenter, identity rotation).
+					b3Transform boxToLocal = { canonCenter, b3Quat_identity };
+					b3Transform transformBtoBox = b3InvMulTransforms( boxToLocal, transformBtoA );
 
-				b3LocalManifold geom = { 0 };
-				geom.points = pointBuffer;
-				int count =
-					b3CollideCanonicalWithShape( &geom, pointCapacity, b3Vec3_zero, canonHalf, shapeB, transformBtoBox, &localCache );
+					geom.pointCount = 0;
+					count = b3CollideCanonicalWithShape( &geom, pointCapacity, canonHalf, shapeB, transformBtoBox, &localCache );
+					prevCanon = canon;
+					havePrevCanon = true;
+				}
 				if ( count == 0 )
 				{
 					continue;
@@ -276,7 +293,7 @@ bool b3ComputeVoxelsManifolds( b3World* world, int workerIndex, b3Contact* conta
 					if ( p.separation < 0.0f )
 					{
 						b3Vec3 sp1 = b3VoxelSupport( voxelCenter, radius, b3Neg( normalA ) );
-						b3Vec3 sp2 = b3SupportShapeBinA( &proxyB, rotBtoA, transformBtoA, normalA );
+						b3Vec3 sp2 = b3SupportShapeBinA( &proxyB, matrixBtoA, transformBtoA, normalA );
 						float testDist = b3Dot( b3Sub( sp2, sp1 ), b3Neg( normalA ) );
 						if ( testDist >= p.separation )
 						{

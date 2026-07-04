@@ -7,9 +7,8 @@
 
 #pragma once
 
-#include "voxels_consts.h"
-
 #include "box3d/types.h"
+#include "voxels_consts.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -60,13 +59,21 @@ typedef struct b3IVec3
 // Local-space: voxel (x,y,z) min corner = origin + (x,y,z) * voxelSize; center adds half voxelSize.
 typedef struct b3Voxels
 {
-	b3VoxelState* states;	// cx*cy*cz entries
-	int cx, cy, cz;			// grid dimensions (each >= 1)
-	b3Vec3 voxelSize;		// per-axis edge length (each component > 0)
-	b3Vec3 origin;			// local-space min corner of voxel (0,0,0)
-	b3AABB localAABB;		// cached bounds of the whole grid
+	b3VoxelState* states; // cx*cy*cz entries
+	int cx, cy, cz;	   // grid dimensions (each >= 1)
+	b3Vec3 voxelSize;	   // per-axis edge length (each component > 0)
+	b3Vec3 origin;		   // local-space min corner of voxel (0,0,0)
+	b3AABB localAABB;	   // cached bounds of the whole grid
 	b3Vec3 proxyCorners[8]; // 8 corners of localAABB, for b3MakeShapeProxy coarse queries
 } b3Voxels;
+
+// A voxel yielded by iteration.
+typedef struct b3VoxelData
+{
+	b3IVec3 grid;	  // integer grid coords
+	b3Vec3 center;	  // local-space center
+	b3VoxelState state; // neighborhood byte
+} b3VoxelData;
 
 // ---- Geometry helpers ----
 
